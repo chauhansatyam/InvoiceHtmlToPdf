@@ -1,38 +1,81 @@
-# app.py - Fixed version for Railway
+# app.py - Railway-compatible version
 from flask import Flask, request, jsonify
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 import base64
 import os
 import time
 import shutil
+import subprocess
 from datetime import datetime
 
 app = Flask(__name__)
 
+def get_chrome_version(chrome_path):
+    """Get Chrome version from binary"""
+    try:
+        result = subprocess.run([chrome_path, '--version'], 
+                              capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            version = result.stdout.strip().split()[-1]
+            return version
+        return None
+    except:
+        return None
+
 def find_chrome_binary():
-    """Locate Chromium/Chrome binary in Linux container."""
+    """Locate Chromium/Chrome binary in Railway's environment."""
     candidates = [
-        "chromium",
-        "chromium-browser", 
-        "google-chrome",
-        "google-chrome-stable",
+        "/root/.nix-profile/bin/chromium",
         "/usr/bin/chromium",
-        "/usr/bin/chromium-browser",
+        "/usr/bin/chromium-browser", 
         "/usr/bin/google-chrome",
-        "/usr/bin/google-chrome-stable"
+        "chromium",
+        "google-chrome"
     ]
     for c in candidates:
+        if os.path.exists(c) and os.access(c, os.X_OK):
+            print(f"Found Chrome binary: {c}")
+            return c
         path = shutil.which(c)
         if path:
             print(f"Found Chrome binary: {path}")
             return path
-        if os.path.exists(c) and os.access(c, os.X_OK):
-            print(f"Found Chrome binary: {c}")
-            return c
     print("No Chrome binary found")
     return None
+
+def setup_chromedriver():
+    """Setup ChromeDriver for Railway environment"""
+    try:
+        # First try to use system chromedriver if available
+        chromedriver_path = shutil.which('chromedriver')
+        if chromedriver_path:
+            print(f"Using system ChromeDriver: {chromedriver_path}")
+            return chromedriver_path
+        
+        # Try manual ChromeDriverManager with specific version
+        from webdriver_manager.chrome import ChromeDriverManager
+        try:
+            # Try with latest version
+            driver_path = ChromeDriverManager(version="latest").install()
+            print(f"ChromeDriverManager installed at: {driver_path}")
+            return driver_path
+        except Exception as e:
+            print(f"ChromeDriverManager failed: {e}")
+            
+            # Try with a specific stable version
+            try:
+                driver_path = ChromeDriverManager(version="119.0.6045.105").install()
+                print(f"ChromeDriverManager with specific version: {driver_path}")
+                return driver_path
+            except Exception as e2:
+                print(f"ChromeDriverManager with specific version failed: {e2}")
+        
+        raise Exception("No ChromeDriver could be set up")
+        
+    except Exception as e:
+        print(f"ChromeDriver setup failed: {e}")
+        return None
 
 def convert_url_to_pdf_chrome(url, wait_time=25):
     """Convert a URL to PDF using Selenium + Chrome."""
@@ -41,12 +84,20 @@ def convert_url_to_pdf_chrome(url, wait_time=25):
     
     try:
         chrome_binary = find_chrome_binary()
+        if not chrome_binary:
+            raise Exception("Chrome binary not found")
+            
         print(f"Converting URL: {url}")
         print(f"Wait time: {wait_time} seconds")
         print(f"Chrome binary: {chrome_binary}")
+        
+        # Get Chrome version
+        chrome_version = get_chrome_version(chrome_binary)
+        print(f"Chrome version: {chrome_version}")
 
-        # Chrome options
+        # Chrome options optimized for Railway
         options = webdriver.ChromeOptions()
+        options.binary_location = chrome_binary
         options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
@@ -58,20 +109,15 @@ def convert_url_to_pdf_chrome(url, wait_time=25):
         options.add_argument("--disable-background-timer-throttling")
         options.add_argument("--disable-backgrounding-occluded-windows")
         options.add_argument("--disable-renderer-backgrounding")
-        
-        # Set Chrome binary location if found
-        if chrome_binary:
-            options.binary_location = chrome_binary
+        options.add_argument("--disable-features=VizDisplayCompositor")
+        options.add_argument("--disable-ipc-flooding-protection")
+        options.add_argument("--disable-software-rasterizer")
+        options.add_argument("--disable-background-networking")
 
-        # Install ChromeDriver (NO ChromeType!)
-        try:
-            driver_path = ChromeDriverManager().install()
-            print(f"ChromeDriver installed at: {driver_path}")
-        except Exception as e:
-            print(f"ChromeDriverManager failed: {e}")
-            driver_path = shutil.which('chromedriver')
-            if not driver_path:
-                raise Exception("No ChromeDriver found")
+        # Setup ChromeDriver
+        driver_path = setup_chromedriver()
+        if not driver_path:
+            raise Exception("ChromeDriver setup failed")
 
         service = Service(driver_path)
         driver = webdriver.Chrome(service=service, options=options)
@@ -83,6 +129,12 @@ def convert_url_to_pdf_chrome(url, wait_time=25):
         print(f"Waiting {wait_time} seconds for dynamic content...")
         time.sleep(wait_time)
         
+        # Check if page loaded
+        page_title = driver.title
+        page_source_length = len(driver.page_source)
+        print(f"Page title: {page_title}")
+        print(f"Page source length: {page_source_length}")
+
         # Use Chrome DevTools Protocol to generate PDF
         print("Generating PDF...")
         print_options = {
@@ -90,7 +142,13 @@ def convert_url_to_pdf_chrome(url, wait_time=25):
             "displayHeaderFooter": False,
             "printBackground": True,
             "preferCSSPageSize": True,
-            "format": "A4"
+            "format": "A4",
+            "margin": {
+                "top": 0.4,
+                "bottom": 0.4,
+                "left": 0.4,
+                "right": 0.4
+            }
         }
         
         result = driver.execute_cdp_cmd("Page.printToPDF", print_options)
@@ -151,10 +209,15 @@ def convert_to_pdf_base64():
 def health():
     """Health check endpoint"""
     chrome_binary = find_chrome_binary()
+    chrome_version = get_chrome_version(chrome_binary) if chrome_binary else None
+    chromedriver_path = setup_chromedriver()
+    
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "chrome_binary": chrome_binary,
+        "chrome_version": chrome_version,
+        "chromedriver_path": chromedriver_path,
         "service": "Kairali PDF API"
     })
 
@@ -169,6 +232,25 @@ def home():
             "/convert-to-pdf-base64": "POST - Convert URL to PDF"
         }
     })
+
+@app.route("/debug", methods=["GET"])
+def debug():
+    """Debug Chrome and ChromeDriver setup"""
+    chrome_binary = find_chrome_binary()
+    chrome_version = get_chrome_version(chrome_binary) if chrome_binary else None
+    chromedriver_path = setup_chromedriver()
+    
+    debug_info = {
+        "chrome_binary": chrome_binary,
+        "chrome_version": chrome_version,
+        "chromedriver_path": chromedriver_path,
+        "environment": {
+            "PATH": os.environ.get("PATH", ""),
+            "PWD": os.getcwd()
+        }
+    }
+    
+    return jsonify(debug_info)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
