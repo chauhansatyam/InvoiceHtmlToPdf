@@ -20,38 +20,7 @@ def convert_url_to_pdf_chrome(url, wait_time=25):
         print(f"Converting: {url}")
         print(f"Wait time: {wait_time} seconds")
         
-        # Chrome command with PDF generation
-        # chrome_cmd = [
-        #     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-        #     '--headless',
-        #     '--disable-gpu',
-        #     '--no-sandbox',
-        #     '--disable-dev-shm-usage',
-        #     '--virtual-time-budget=25000',  # Wait 25 seconds for JS
-        #     '--run-all-compositor-stages-before-draw',
-        #     '--disable-background-timer-throttling',
-        #     '--disable-backgrounding-occluded-windows',
-        #     '--disable-renderer-backgrounding',
-        #     f'--print-to-pdf={pdf_path}',
-        #     '--print-to-pdf-no-header',
-        #     '--hide-scrollbars',
-        #     url
-        # ]
-        chrome_cmd = [
-    '/app/.chrome-for-testing/chrome-linux64/chrome',
-    '--headless',
-    '--disable-gpu',
-    '--no-sandbox',
-    '--disable-dev-shm-usage',
-    f'--virtual-time-budget={wait_time * 1000}',
-    f'--print-to-pdf={pdf_path}',
-    '--hide-scrollbars',
-    '--disable-web-security',
-    '--single-process',  # Important for Heroku
-    '--disable-dev-shm-usage',
-    '--remote-debugging-port=0',
-    url
-]
+        chrome_cmd = ['google-chrome','--headless','--disable-gpu','--no-sandbox','--disable-dev-shm-usage',f'--virtual-time-budget={wait_time * 1000}',f'--print-to-pdf={pdf_path}','--hide-scrollbars','--disable-web-security','--single-process',url]
         
         print("Running Chrome to generate PDF...")
         result = subprocess.run(chrome_cmd, capture_output=True, text=True, timeout=60)

@@ -1,1 +1,1 @@
-web: gunicorn app_chrome:app
+web: gunicorn app_chrome:app --bind 0.0.0.0:$PORT
