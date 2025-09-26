@@ -5,17 +5,14 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from webdriver_manager.utils import ChromeType
 import base64
-import tempfile
 import os
 import time
 import shutil
-import subprocess
-import re
 
 app = Flask(__name__)
 
 def find_chrome_binary():
-    # try common names
+    """Locate Chromium/Chrome binary in Linux container."""
     candidates = [
         "chromium",
         "chromium-browser",
@@ -29,19 +26,17 @@ def find_chrome_binary():
         path = shutil.which(c)
         if path:
             return path
-        # also check literal path
         if os.path.exists(c) and os.access(c, os.X_OK):
             return c
     return None
 
 def convert_url_to_pdf_chrome(url, wait_time=25):
-    """Convert URL to PDF using Selenium + Chromium installed by Nixpacks."""
+    """Convert a URL to PDF using Selenium + Chromium."""
     pdf_bytes = None
     chrome_binary = find_chrome_binary()
     print("Detected chrome binary:", chrome_binary)
 
     options = webdriver.ChromeOptions()
-    # headless for modern Chrome:
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
@@ -49,14 +44,11 @@ def convert_url_to_pdf_chrome(url, wait_time=25):
     options.add_argument("--hide-scrollbars")
     options.add_argument("--disable-web-security")
     options.add_argument("--single-process")
-    # optional: reduce resource usage
     options.add_argument("--disable-extensions")
-
     if chrome_binary:
         options.binary_location = chrome_binary
 
     try:
-        # get chromedriver built for Chromium
         driver_path = ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install()
         service = Service(driver_path)
 
@@ -64,16 +56,14 @@ def convert_url_to_pdf_chrome(url, wait_time=25):
         driver.set_page_load_timeout(60)
         driver.get(url)
 
-        # let JS / XHRs finish
-        time.sleep(wait_time)
+        time.sleep(wait_time)  # wait for JS/XHR
 
-        # Use Chrome DevTools Protocol to print to PDF
+        # Use CDP to print to PDF
         print_options = {
             "landscape": False,
             "displayHeaderFooter": False,
             "printBackground": True,
-            "preferCSSPageSize": True,
-            # "paperWidth": 8.27, "paperHeight": 11.69  # A4 in inches (optional)
+            "preferCSSPageSize": True
         }
         result = driver.execute_cdp_cmd("Page.printToPDF", print_options)
         driver.quit()
@@ -88,7 +78,6 @@ def convert_url_to_pdf_chrome(url, wait_time=25):
         except:
             pass
         return None
-
 
 @app.route("/convert", methods=["POST"])
 def convert():
@@ -107,7 +96,10 @@ def convert():
     else:
         return jsonify({"error": "Failed to generate PDF"}), 500
 
+@app.route("/", methods=["GET"])
+def home():
+    return "Server is running!"
 
 if __name__ == "__main__":
-    # port 8080 so Railway / containers pick it up
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
