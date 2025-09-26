@@ -5,7 +5,8 @@ builder = "NIXPACKS"
 providers = ["python"]
 
 [build.nixpacksPlan.phases.setup]
-nixPkgs = ["chromium"]
+nixPkgs = ["python311", "chromium"]
 
 [deploy]
 startCommand = "gunicorn app:app --bind 0.0.0.0:8080"
+
