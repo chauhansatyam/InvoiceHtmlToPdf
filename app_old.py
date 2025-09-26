@@ -63,12 +63,13 @@ def convert_url_to_pdf_chrome(url, wait_time=25):
         if chrome_binary:
             options.binary_location = chrome_binary
 
-        # Install ChromeDriver (NO ChromeType!)
+        # Install ChromeDriver (simplified - removed ChromeType)
         try:
             driver_path = ChromeDriverManager().install()
             print(f"ChromeDriver installed at: {driver_path}")
         except Exception as e:
             print(f"ChromeDriverManager failed: {e}")
+            # Try system chromedriver
             driver_path = shutil.which('chromedriver')
             if not driver_path:
                 raise Exception("No ChromeDriver found")
@@ -83,6 +84,10 @@ def convert_url_to_pdf_chrome(url, wait_time=25):
         print(f"Waiting {wait_time} seconds for dynamic content...")
         time.sleep(wait_time)
         
+        # Check if content loaded
+        page_source_length = len(driver.page_source)
+        print(f"Page source length: {page_source_length}")
+
         # Use Chrome DevTools Protocol to generate PDF
         print("Generating PDF...")
         print_options = {
@@ -90,7 +95,13 @@ def convert_url_to_pdf_chrome(url, wait_time=25):
             "displayHeaderFooter": False,
             "printBackground": True,
             "preferCSSPageSize": True,
-            "format": "A4"
+            "format": "A4",
+            "margin": {
+                "top": 0.4,
+                "bottom": 0.4, 
+                "left": 0.4,
+                "right": 0.4
+            }
         }
         
         result = driver.execute_cdp_cmd("Page.printToPDF", print_options)
@@ -147,6 +158,11 @@ def convert_to_pdf_base64():
         print(f"Error in convert endpoint: {str(e)}")
         return jsonify({'error': str(e), 'success': False}), 500
 
+@app.route("/convert", methods=["POST"])
+def convert():
+    """Legacy endpoint - redirect to new one"""
+    return convert_to_pdf_base64()
+
 @app.route("/health", methods=["GET"])
 def health():
     """Health check endpoint"""
@@ -166,8 +182,28 @@ def home():
         "status": "running",
         "endpoints": {
             "/health": "GET - Health check",
-            "/convert-to-pdf-base64": "POST - Convert URL to PDF"
+            "/convert-to-pdf-base64": "POST - Convert URL to PDF",
+            "/debug": "GET - Debug Chrome installation"
         }
+    })
+
+@app.route("/debug", methods=["GET"])
+def debug():
+    """Debug Chrome installation"""
+    import shutil
+    chrome_binary = find_chrome_binary()
+    chromedriver = shutil.which('chromedriver')
+    
+    return jsonify({
+        "chrome_binary": chrome_binary,
+        "chromedriver": chromedriver,
+        "chrome_candidates": [
+            {"path": c, "exists": bool(shutil.which(c) or (os.path.exists(c) and os.access(c, os.X_OK)))} 
+            for c in [
+                "chromium", "chromium-browser", "google-chrome", "google-chrome-stable",
+                "/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"
+            ]
+        ]
     })
 
 if __name__ == "__main__":
