@@ -1,12 +1,10 @@
-# app.py - Fixed ChromeDriver download URL
+# app.py - Direct Chrome PDF generation (no Selenium)
 from flask import Flask, request, jsonify
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
+import subprocess
 import base64
 import os
 import time
-import requests
-import zipfile
+import tempfile
 from datetime import datetime
 
 app = Flask(__name__)
@@ -24,119 +22,80 @@ def find_chrome_binary():
             return c
     return None
 
-def download_chromedriver():
-    """Download ChromeDriver with working URL"""
-    try:
-        chromedriver_dir = "/tmp/chromedriver"
-        chromedriver_path = f"{chromedriver_dir}/chromedriver"
-        
-        # Check if already exists
-        if os.path.exists(chromedriver_path) and os.access(chromedriver_path, os.X_OK):
-            print(f"Using existing ChromeDriver: {chromedriver_path}")
-            return chromedriver_path
-        
-        print("Downloading ChromeDriver...")
-        os.makedirs(chromedriver_dir, exist_ok=True)
-        
-        # Use Chrome for Testing stable version
-        url = "https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/119.0.6045.105/linux64/chromedriver-linux64.zip"
-        
-        response = requests.get(url, timeout=30)
-        if response.status_code == 404:
-            # Fallback to an older stable version
-            print("Trying fallback ChromeDriver version...")
-            url = "https://chromedriver.storage.googleapis.com/114.0.5735.90/chromedriver_linux64.zip"
-            response = requests.get(url, timeout=30)
-        
-        response.raise_for_status()
-        
-        zip_path = f"{chromedriver_dir}/chromedriver.zip"
-        with open(zip_path, 'wb') as f:
-            f.write(response.content)
-        
-        # Extract
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(chromedriver_dir)
-        
-        # The new format might have chromedriver in a subfolder
-        if not os.path.exists(chromedriver_path):
-            # Look for chromedriver in subfolders
-            for root, dirs, files in os.walk(chromedriver_dir):
-                if 'chromedriver' in files:
-                    old_path = os.path.join(root, 'chromedriver')
-                    os.rename(old_path, chromedriver_path)
-                    break
-        
-        # Make executable
-        os.chmod(chromedriver_path, 0o755)
-        
-        print(f"ChromeDriver ready at: {chromedriver_path}")
-        return chromedriver_path
-        
-    except Exception as e:
-        print(f"ChromeDriver download failed: {e}")
-        return None
-
-def convert_url_to_pdf_chrome(url, wait_time=25):
-    """Convert URL to PDF using Chrome."""
-    driver = None
+def convert_url_to_pdf_direct(url, wait_time=25):
+    """Convert URL to PDF using Chrome directly via subprocess."""
+    chrome_binary = find_chrome_binary()
+    if not chrome_binary:
+        raise Exception("Chrome binary not found")
+    
+    # Create temporary file for PDF output
+    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
+        pdf_path = tmp_file.name
     
     try:
-        chrome_binary = find_chrome_binary()
-        if not chrome_binary:
-            raise Exception("Chrome binary not found")
+        print(f"Converting URL: {url}")
+        print(f"Chrome binary: {chrome_binary}")
+        print(f"Wait time: {wait_time} seconds")
         
-        chromedriver_path = download_chromedriver()
-        if not chromedriver_path:
-            raise Exception("ChromeDriver setup failed")
+        # Chrome command for direct PDF generation
+        cmd = [
+            chrome_binary,
+            '--headless',
+            '--no-sandbox',
+            '--disable-gpu',
+            '--disable-dev-shm-usage',
+            '--disable-extensions',
+            '--disable-plugins',
+            '--disable-images',  # Faster loading
+            '--hide-scrollbars',
+            '--single-process',
+            '--disable-web-security',
+            '--disable-features=VizDisplayCompositor',
+            f'--virtual-time-budget={wait_time * 1000}',  # Wait for JS
+            '--run-all-compositor-stages-before-draw',
+            f'--print-to-pdf={pdf_path}',
+            '--print-to-pdf-no-header',
+            url
+        ]
         
-        print(f"Converting: {url}")
-        print(f"Chrome: {chrome_binary}")
-        print(f"ChromeDriver: {chromedriver_path}")
-
-        options = webdriver.ChromeOptions()
-        options.binary_location = chrome_binary
-        options.add_argument("--headless=new")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--single-process")
-        options.add_argument("--disable-extensions")
-        options.add_argument("--hide-scrollbars")
-
-        service = Service(chromedriver_path)
-        driver = webdriver.Chrome(service=service, options=options)
-        driver.set_page_load_timeout(60)
+        print("Running Chrome command...")
+        result = subprocess.run(
+            cmd, 
+            capture_output=True, 
+            text=True, 
+            timeout=60,
+            cwd='/tmp'
+        )
         
-        print("Loading page...")
-        driver.get(url)
+        print(f"Chrome exit code: {result.returncode}")
+        if result.stdout:
+            print(f"Chrome stdout: {result.stdout}")
+        if result.stderr:
+            print(f"Chrome stderr: {result.stderr}")
         
-        print(f"Waiting {wait_time} seconds...")
-        time.sleep(wait_time)
+        # Wait a bit for file to be written
+        time.sleep(2)
         
-        print("Generating PDF...")
-        result = driver.execute_cdp_cmd("Page.printToPDF", {
-            "landscape": False,
-            "displayHeaderFooter": False,
-            "printBackground": True,
-            "format": "A4"
-        })
-        
-        pdf_bytes = base64.b64decode(result["data"])
-        print(f"PDF generated ({len(pdf_bytes)} bytes)")
-        return pdf_bytes
-
+        # Check if PDF was created
+        if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+            with open(pdf_path, 'rb') as f:
+                pdf_bytes = f.read()
+            print(f"PDF generated successfully ({len(pdf_bytes)} bytes)")
+            return pdf_bytes
+        else:
+            print("PDF file not created or empty")
+            return None
+            
+    except subprocess.TimeoutExpired:
+        print("Chrome command timed out")
+        return None
     except Exception as e:
-        print(f"Error: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        print(f"Error generating PDF: {e}")
         return None
     finally:
-        if driver:
-            try:
-                driver.quit()
-            except:
-                pass
+        # Clean up temp file
+        if os.path.exists(pdf_path):
+            os.unlink(pdf_path)
 
 @app.route("/convert-to-pdf-base64", methods=["POST"])
 def convert_to_pdf_base64():
@@ -151,7 +110,8 @@ def convert_to_pdf_base64():
         if not url:
             return jsonify({'error': 'URL required', 'success': False}), 400
 
-        pdf_bytes = convert_url_to_pdf_chrome(url, wait_time)
+        print(f"Starting conversion: {url}")
+        pdf_bytes = convert_url_to_pdf_direct(url, wait_time)
 
         if pdf_bytes:
             pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
@@ -168,25 +128,41 @@ def convert_to_pdf_base64():
             return jsonify({'error': 'PDF generation failed', 'success': False}), 500
 
     except Exception as e:
+        print(f"Error in endpoint: {e}")
         return jsonify({'error': str(e), 'success': False}), 500
 
 @app.route("/health", methods=["GET"])
 def health():
     chrome_binary = find_chrome_binary()
-    chromedriver_path = download_chromedriver()
-    
     return jsonify({
         "status": "healthy",
         "chrome_binary": chrome_binary,
-        "chromedriver_available": bool(chromedriver_path),
+        "chrome_available": bool(chrome_binary),
         "service": "Kairali PDF API"
     })
+
+@app.route("/test-chrome", methods=["GET"])
+def test_chrome():
+    """Test Chrome directly with a simple page"""
+    try:
+        result = convert_url_to_pdf_direct("https://example.com", 10)
+        return jsonify({
+            "test": "success" if result else "failed",
+            "pdf_size": len(result) if result else 0
+        })
+    except Exception as e:
+        return jsonify({"test": "error", "error": str(e)})
 
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({
-        "message": "Kairali Invoice PDF API",
-        "status": "running"
+        "message": "Kairali Invoice PDF API (Direct Chrome)",
+        "status": "running",
+        "endpoints": {
+            "/health": "GET - Health check",
+            "/test-chrome": "GET - Test Chrome with example.com", 
+            "/convert-to-pdf-base64": "POST - Convert URL to PDF"
+        }
     })
 
 if __name__ == "__main__":
