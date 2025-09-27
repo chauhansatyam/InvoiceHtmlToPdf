@@ -6,3 +6,5 @@ apt-get install -y wkhtmltopdf || echo "wkhtmltopdf install failed, will use Wea
 
 # Install Python dependencies
 pip install -r requirements.txt
+
+echo "Build completed successfully"
