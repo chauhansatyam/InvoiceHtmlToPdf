@@ -1,141 +1,82 @@
-# app.py - Chrome with Railway-specific flags
+# app.py - wkhtmltopdf version
 from flask import Flask, request, jsonify
 import subprocess
 import base64
 import os
-import time
+import shutil
 import tempfile
 from datetime import datetime
 
 app = Flask(__name__)
 
-def find_chrome_binary():
-    """Find Chrome binary in Railway environment."""
-    candidates = [
-        "/root/.nix-profile/bin/chromium",
-        "/usr/bin/chromium",
-        "/usr/bin/google-chrome"
-    ]
-    for c in candidates:
-        if os.path.exists(c) and os.access(c, os.X_OK):
-            print(f"Found Chrome binary: {c}")
-            return c
-    return None
+def check_wkhtmltopdf():
+    """Check if wkhtmltopdf is available"""
+    return shutil.which('wkhtmltopdf') is not None
 
-def convert_url_to_pdf_direct(url, wait_time=25):
-    """Convert URL to PDF using Chrome with Railway-specific flags."""
-    chrome_binary = find_chrome_binary()
-    if not chrome_binary:
-        raise Exception("Chrome binary not found")
+def convert_url_to_pdf_wkhtmltopdf(url, wait_time=15):
+    """Convert URL to PDF using wkhtmltopdf"""
     
-    # Create temporary file for PDF output
-    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
-        pdf_path = tmp_file.name
+    if not check_wkhtmltopdf():
+        raise Exception("wkhtmltopdf not found on system")
     
     try:
         print(f"Converting URL: {url}")
-        print(f"Chrome binary: {chrome_binary}")
-        print(f"PDF output: {pdf_path}")
+        print(f"JavaScript delay: {wait_time} seconds")
         
-        # Comprehensive Chrome flags for containerized environments
+        # wkhtmltopdf command with comprehensive options
         cmd = [
-            chrome_binary,
-            '--headless',
-            '--no-sandbox',
-            '--disable-gpu',
-            '--disable-dev-shm-usage',
-            '--disable-extensions',
-            '--disable-plugins',
-            '--disable-background-networking',
-            '--disable-background-timer-throttling',
-            '--disable-backgrounding-occluded-windows',
-            '--disable-renderer-backgrounding',
-            '--disable-features=TranslateUI,BlinkGenPropertyTrees',
-            '--disable-web-security',
-            '--disable-features=VizDisplayCompositor',
-            '--disable-ipc-flooding-protection',
-            '--single-process',
-            '--no-zygote',
-            '--disable-dev-tools',
-            '--disable-logging',
-            '--disable-software-rasterizer',
-            '--hide-scrollbars',
-            # Font and display fixes for Railway/Nix
-            '--font-render-hinting=none',
-            '--disable-font-subpixel-positioning',
-            '--force-color-profile=srgb',
-            '--disable-lcd-text',
-            # Network and system fixes
-            '--disable-dbus',
-            '--disable-features=AudioServiceOutOfProcess',
-            '--disable-features=DialMediaRouteProvider',
-            '--no-first-run',
-            '--no-default-browser-check',
-            # PDF specific
-            f'--virtual-time-budget={wait_time * 1000}',
-            '--run-all-compositor-stages-before-draw',
-            f'--print-to-pdf={pdf_path}',
-            '--print-to-pdf-no-header',
-            # Target URL
-            url
+            'wkhtmltopdf',
+            '--page-size', 'A4',
+            '--orientation', 'Portrait',
+            '--margin-top', '0.5in',
+            '--margin-right', '0.5in', 
+            '--margin-bottom', '0.5in',
+            '--margin-left', '0.5in',
+            '--encoding', 'UTF-8',
+            '--no-header-line',  # Remove header line
+            '--no-footer-line',  # Remove footer line
+            '--disable-smart-shrinking',
+            '--print-media-type',
+            '--no-background',  # Can help with rendering
+            f'--javascript-delay', str(wait_time * 1000),  # Wait for JS in milliseconds
+            '--enable-javascript',
+            '--debug-javascript',  # For debugging
+            '--load-error-handling', 'ignore',
+            '--load-media-error-handling', 'ignore',
+            url,
+            '-'  # Output to stdout
         ]
         
-        print("Running Chrome with comprehensive flags...")
-        
-        # Set environment variables to handle missing system resources
-        env = os.environ.copy()
-        env.update({
-            'DISPLAY': ':99',
-            'CHROME_DEVEL_SANDBOX': '',
-            'FONTCONFIG_PATH': '/tmp',
-            'XDG_RUNTIME_DIR': '/tmp'
-        })
+        print("Running wkhtmltopdf command...")
+        print(f"Command: {' '.join(cmd[:10])}...")  # Show first part of command
         
         result = subprocess.run(
-            cmd, 
-            capture_output=True, 
-            text=True, 
-            timeout=90,  # Increased timeout
-            cwd='/tmp',
-            env=env
+            cmd,
+            capture_output=True,
+            timeout=120,  # 2 minute timeout
+            cwd='/tmp'
         )
         
-        print(f"Chrome exit code: {result.returncode}")
-        if result.stdout:
-            print(f"Chrome stdout: {result.stdout[:500]}...")  # Truncate long output
+        print(f"wkhtmltopdf exit code: {result.returncode}")
+        
         if result.stderr:
-            print(f"Chrome stderr (first 500 chars): {result.stderr[:500]}...")
+            stderr_text = result.stderr.decode('utf-8', errors='ignore')
+            print(f"wkhtmltopdf stderr: {stderr_text[:500]}...")  # Truncate long output
         
-        # Wait longer for file to be written
-        time.sleep(3)
-        
-        # Check if PDF was created
-        if os.path.exists(pdf_path):
-            file_size = os.path.getsize(pdf_path)
-            print(f"PDF file size: {file_size} bytes")
-            
-            if file_size > 0:
-                with open(pdf_path, 'rb') as f:
-                    pdf_bytes = f.read()
-                print(f"PDF generated successfully ({len(pdf_bytes)} bytes)")
-                return pdf_bytes
-            else:
-                print("PDF file is empty")
-                return None
+        if result.returncode == 0 and result.stdout:
+            pdf_bytes = result.stdout
+            print(f"PDF generated successfully ({len(pdf_bytes)} bytes)")
+            return pdf_bytes
         else:
-            print("PDF file not created")
+            print(f"wkhtmltopdf failed with exit code {result.returncode}")
             return None
             
     except subprocess.TimeoutExpired:
-        print("Chrome command timed out")
+        print("wkhtmltopdf command timed out")
         return None
     except Exception as e:
         print(f"Error generating PDF: {e}")
         return None
-    finally:
-        # Clean up temp file
-        if os.path.exists(pdf_path):
-            os.unlink(pdf_path)
 
 @app.route("/convert-to-pdf-base64", methods=["POST"])
 def convert_to_pdf_base64():
@@ -145,13 +86,13 @@ def convert_to_pdf_base64():
             return jsonify({'error': 'JSON required', 'success': False}), 400
             
         url = data.get('url')
-        wait_time = int(data.get('wait_time', 30))  # Increased default
+        wait_time = int(data.get('wait_time', 15))  # Default 15 seconds
 
         if not url:
             return jsonify({'error': 'URL required', 'success': False}), 400
 
         print(f"Starting conversion: {url}")
-        pdf_bytes = convert_url_to_pdf_direct(url, wait_time)
+        pdf_bytes = convert_url_to_pdf_wkhtmltopdf(url, wait_time)
 
         if pdf_bytes:
             pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
@@ -165,7 +106,7 @@ def convert_to_pdf_base64():
                 'size_bytes': len(pdf_bytes)
             })
         else:
-            return jsonify({'error': 'PDF generation failed - Chrome could not generate PDF', 'success': False}), 500
+            return jsonify({'error': 'PDF generation failed', 'success': False}), 500
 
     except Exception as e:
         print(f"Error in endpoint: {e}")
@@ -173,43 +114,38 @@ def convert_to_pdf_base64():
 
 @app.route("/health", methods=["GET"])
 def health():
-    chrome_binary = find_chrome_binary()
+    wkhtmltopdf_available = check_wkhtmltopdf()
+    wkhtmltopdf_path = shutil.which('wkhtmltopdf')
+    
     return jsonify({
         "status": "healthy",
-        "chrome_binary": chrome_binary,
-        "chrome_available": bool(chrome_binary),
-        "service": "Kairali PDF API (Railway Optimized)"
+        "wkhtmltopdf_available": wkhtmltopdf_available,
+        "wkhtmltopdf_path": wkhtmltopdf_path,
+        "service": "Kairali PDF API (wkhtmltopdf)"
     })
 
-@app.route("/test-simple", methods=["GET"])
-def test_simple():
-    """Test Chrome with the simplest possible page"""
+@app.route("/test-wkhtmltopdf", methods=["GET"])
+def test_wkhtmltopdf():
+    """Test wkhtmltopdf with a simple page"""
     try:
-        # Create a simple local HTML file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as tmp_file:
-            tmp_file.write('<html><body><h1>Test Page</h1><p>This is a test.</p></body></html>')
-            html_path = tmp_file.name
-        
-        try:
-            result = convert_url_to_pdf_direct(f"file://{html_path}", 5)
-            return jsonify({
-                "test": "success" if result else "failed",
-                "pdf_size": len(result) if result else 0
-            })
-        finally:
-            os.unlink(html_path)
-            
+        # Test with example.com
+        result = convert_url_to_pdf_wkhtmltopdf("https://example.com", 5)
+        return jsonify({
+            "test": "success" if result else "failed",
+            "pdf_size": len(result) if result else 0,
+            "wkhtmltopdf_available": check_wkhtmltopdf()
+        })
     except Exception as e:
         return jsonify({"test": "error", "error": str(e)})
 
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({
-        "message": "Kairali Invoice PDF API (Railway Optimized)",
+        "message": "Kairali Invoice PDF API (wkhtmltopdf)",
         "status": "running",
         "endpoints": {
             "/health": "GET - Health check",
-            "/test-simple": "GET - Test Chrome with simple HTML", 
+            "/test-wkhtmltopdf": "GET - Test with example.com",
             "/convert-to-pdf-base64": "POST - Convert URL to PDF"
         }
     })
