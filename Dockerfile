@@ -1,28 +1,31 @@
 FROM python:3.9-slim
 
-# Install system dependencies including wkhtmltopdf
+# Install dependencies and download wkhtmltopdf manually
 RUN apt-get update && apt-get install -y \
-    wkhtmltopdf \
+    wget \
     xvfb \
     fontconfig \
     libjpeg62-turbo \
     libxrender1 \
+    libfontconfig1 \
+    libx11-6 \
+    libxext6 \
+    libxcb1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+# Download and install wkhtmltopdf directly
+RUN wget -q https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-3/wkhtmltox_0.12.6.1-3.bullseye_amd64.deb \
+    && dpkg -i wkhtmltox_0.12.6.1-3.bullseye_amd64.deb || true \
+    && apt-get update && apt-get -f install -y \
+    && rm wkhtmltox_0.12.6.1-3.bullseye_amd64.deb
+
 WORKDIR /app
 
-# Copy requirements first (for Docker layer caching)
 COPY requirements.txt .
-
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
 COPY . .
 
-# Expose port
 EXPOSE 8080
 
-# Run the application
-CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:8080", "--timeout", "120"]
+CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:8080"]
