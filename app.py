@@ -73,71 +73,62 @@ def check_wkhtmltopdf():
     """Check if wkhtmltopdf is available"""
     return shutil.which('wkhtmltopdf') is not None
 
-def convert_with_wkhtmltopdf_enhanced(url, wait_time=20):
-    """Enhanced wkhtmltopdf with better JavaScript handling"""
+def convert_with_wkhtmltopdf_preload(url, wait_time=30):
+    """Pre-load content, then convert with wkhtmltopdf"""
     try:
-        print(f"Converting with wkhtmltopdf: {url}")
+        print(f"Pre-loading content from: {url}")
         
+        # First, fetch the page to trigger loading, then wait
+        response = requests.get(url, timeout=30)
+        print(f"Initial fetch completed, status: {response.status_code}")
+        
+        # Add extra wait time for the page to fully load its JavaScript
+        time.sleep(5)
+        
+        # Use wkhtmltopdf with aggressive JavaScript settings
         cmd = [
             'wkhtmltopdf',
             '--page-size', 'A4',
-            '--orientation', 'Portrait',
-            '--margin-top', '0.5in',
-            '--margin-right', '0.5in',
-            '--margin-bottom', '0.5in', 
-            '--margin-left', '0.5in',
+            '--margin-top', '0.4in',
+            '--margin-right', '0.4in', 
+            '--margin-bottom', '0.4in',
+            '--margin-left', '0.4in',
             '--encoding', 'UTF-8',
             '--no-header-line',
             '--no-footer-line',
-            '--disable-smart-shrinking',
-            '--print-media-type',
-            '--enable-javascript',  # Enable JS
-            '--javascript-delay', str(wait_time * 1000),  # Wait for JS
-            '--debug-javascript',  # Debug JS execution
-            '--enable-local-file-access',
-            '--allow', '.*',  # Allow all external resources
+            '--enable-javascript',
+            '--javascript-delay', str(wait_time * 1000),  # Convert to milliseconds
+            '--debug-javascript',
             '--load-error-handling', 'ignore',
             '--load-media-error-handling', 'ignore',
-            '--enable-forms',  # Enable form elements
-            '--minimum-font-size', '12',
+            '--disable-smart-shrinking',
+            '--print-media-type',
             '--zoom', '1.0',
             '--dpi', '96',
-            # Additional options for better rendering
-            '--cookie-jar', '/tmp/cookies.txt',
-            '--custom-header', 'Accept-Encoding', 'gzip',
-            '--custom-header', 'User-Agent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+            # More aggressive settings for dynamic content
+            '--enable-local-file-access',
+            '--allow', url,
+            '--custom-header', 'User-Agent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            '--window-status', 'ready',  # Wait for window.status = 'ready'
+            '--run-script', 'window.setTimeout(function(){window.status="ready";}, ' + str(wait_time * 1000) + ');',
             url,
-            '-'  # Output to stdout
+            '-'
         ]
         
         print(f"Running wkhtmltopdf with {wait_time}s JavaScript delay...")
         
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            timeout=150,  # Longer timeout for JS execution
-            cwd='/tmp'
-        )
-        
-        print(f"wkhtmltopdf exit code: {result.returncode}")
-        
-        if result.stderr:
-            stderr_text = result.stderr.decode('utf-8', errors='ignore')
-            print(f"wkhtmltopdf stderr: {stderr_text[:300]}...")
+        result = subprocess.run(cmd, capture_output=True, timeout=180)
         
         if result.returncode == 0 and result.stdout:
-            pdf_bytes = result.stdout
-            print(f"wkhtmltopdf success! PDF size: {len(pdf_bytes)} bytes")
-            return pdf_bytes
+            print(f"Success! PDF size: {len(result.stdout)} bytes")
+            return result.stdout
         else:
-            print(f"wkhtmltopdf failed with exit code {result.returncode}")
+            stderr_text = result.stderr.decode('utf-8', errors='ignore')
+            print(f"wkhtmltopdf failed. Stderr: {stderr_text[:300]}")
             return None
             
-    except subprocess.TimeoutExpired:
-        print("wkhtmltopdf timed out")
-        return None
     except Exception as e:
-        print(f"wkhtmltopdf error: {e}")
+        print(f"Error: {e}")
         return None
 
 def convert_with_weasyprint_fallback(url):
@@ -185,7 +176,7 @@ def convert_url_to_pdf(url, wait_time=20):
     # Try wkhtmltopdf first (handles JavaScript)
     if check_wkhtmltopdf():
         print("wkhtmltopdf is available, using it...")
-        pdf_bytes = convert_with_wkhtmltopdf_enhanced(url, wait_time)
+        pdf_bytes = convert_with_wkhtmltopdf_preload(url, wait_time)
         if pdf_bytes:
             return pdf_bytes
         else:
@@ -194,7 +185,7 @@ def convert_url_to_pdf(url, wait_time=20):
         print("wkhtmltopdf not available, trying to install...")
         if force_install_wkhtmltopdf():
             print("wkhtmltopdf installed successfully, trying conversion...")
-            pdf_bytes = convert_with_wkhtmltopdf_enhanced(url, wait_time)
+            pdf_bytes = convert_with_wkhtmltopdf_preload(url, wait_time)
             if pdf_bytes:
                 return pdf_bytes
         
